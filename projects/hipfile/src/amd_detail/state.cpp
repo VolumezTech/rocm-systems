@@ -6,6 +6,7 @@
 #include "backend/fallback.h"
 #include "backend/fastpath.h"
 #include "backend/host.h"
+#include "backend/userspace-fs.h"
 #include "batch/batch.h"
 #include "buffer.h"
 #include "configuration.h"
@@ -130,6 +131,20 @@ DriverState::registerFile(UnregisteredFile &&uf)
     }
 
     return file_map->registerFile(std::move(uf));
+}
+
+hipFileHandle_t
+DriverState::registerUserspaceFile(void *fs_handle, const hipFileFSOps_t *fs_ops)
+{
+    unique_lock<shared_mutex> ulock{state_mutex};
+
+    // For NVIDIA cuFile compatibility, implicitly "initialize"
+    // the driver if it's currently uninitialized
+    if (ref_count == 0) {
+        ref_count++;
+    }
+
+    return file_map->registerUserspaceFile(fs_handle, fs_ops);
 }
 
 void
@@ -284,6 +299,7 @@ DriverState::getBackends() const
         backends.push_back(fallback_backend);
         backends.push_back(fastpath_backend);
         backends.push_back(host_backend);
+        backends.push_back(std::make_shared<UserspaceFs>());
         return true;
     }();
     (void)once;

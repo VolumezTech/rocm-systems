@@ -116,6 +116,12 @@ public:
     /// @return A handle to be used when calling hipFile IO APIs
     virtual hipFileHandle_t registerFile(UnregisteredFile &&uf);
 
+    /// @brief Registers a file that a userspace filesystem serves
+    /// @param [in] fs_handle The filesystem's handle for the file
+    /// @param [in] fs_ops    The filesystem's operations; read and write must be set
+    /// @return A handle to be used when calling hipFile IO APIs
+    virtual hipFileHandle_t registerUserspaceFile(void *fs_handle, const hipFileFSOps_t *fs_ops);
+
     /// @brief Deregisters the file associated with the provided file handle
     /// @param [in] fh The handle of the file to deregister
     virtual void deregisterFile(hipFileHandle_t fh);

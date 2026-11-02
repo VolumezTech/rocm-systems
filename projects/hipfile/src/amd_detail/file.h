@@ -95,6 +95,15 @@ public:
     virtual bool               isRegularFile() const noexcept  = 0;
     virtual bool               onExt4Ordered() const noexcept  = 0;
     virtual bool               onXfs() const noexcept          = 0;
+
+    /// @brief Get the operations of the userspace filesystem that serves this file
+    /// @return The userspace filesystem operations, or nullptr if the kernel serves this file
+    virtual const hipFileFSOps_t *fsOps() const noexcept = 0;
+
+    /// @brief Get the handle the userspace filesystem registered this file with, which its operations
+    /// receive
+    /// @return The userspace filesystem handle, or nullptr if the kernel serves this file
+    virtual void *fsHandle() const noexcept = 0;
 };
 
 class FileMap;
@@ -154,6 +163,10 @@ public:
     /// @return True if the file is on an xfs filesystem, false otherwise
     virtual bool onXfs() const noexcept override;
 
+    virtual const hipFileFSOps_t *fsOps() const noexcept override;
+
+    virtual void *fsHandle() const noexcept override;
+
     /// @brief Construct a registered file
     /// @param uf An unregistered file
     /// @param k  Key class instance (see passkey.h)
@@ -190,6 +203,59 @@ private:
     bool m_on_xfs;
 };
 
+/// @brief A file that a userspace filesystem serves (hipFileHandleTypeUserspaceFS)
+///
+/// hipFile never touches the file itself: it has no file descriptors, and all IO goes through the
+/// filesystem's operations, which receive the handle the file was registered with. As with cuFile, that
+/// handle is the filesystem's own: a file descriptor, or a pointer to its file object.
+class UserspaceFsFile : public IFile {
+public:
+    virtual ~UserspaceFsFile() override = default;
+
+    // Don't allow copying
+    UserspaceFsFile(const UserspaceFsFile &)            = delete;
+    UserspaceFsFile &operator=(const UserspaceFsFile &) = delete;
+
+    // Don't allow moving
+    UserspaceFsFile(UserspaceFsFile &&)            = delete;
+    UserspaceFsFile &operator=(UserspaceFsFile &&) = delete;
+
+    /// @brief Construct a registered userspace filesystem file
+    /// @param fs_handle The filesystem's handle for the file
+    /// @param fs_ops    The filesystem's operations; read and write must be set
+    /// @param k         Key class instance (see passkey.h)
+    UserspaceFsFile(void *fs_handle, const hipFileFSOps_t *fs_ops, const PassKey<FileMap> &k);
+
+    /// @return -1: the file has no file descriptor of hipFile's
+    virtual int clientFd() const noexcept override;
+    /// @return -1: the file has no file descriptor of hipFile's
+    virtual int bufferedFd() const noexcept override;
+    /// @return nullopt: the file has no file descriptor of hipFile's
+    virtual std::optional<int> unbufferedFd() const noexcept override;
+    /// @return 0: direct IO isn't available
+    virtual uint32_t dioMemAlign() const noexcept override;
+    /// @return 0: direct IO isn't available
+    virtual uint32_t dioOffsetAlign() const noexcept override;
+    /// @return false
+    virtual bool isBlockDevice() const noexcept override;
+    /// @return false
+    virtual bool isRegularFile() const noexcept override;
+    /// @return false
+    virtual bool onExt4Ordered() const noexcept override;
+    /// @return false
+    virtual bool onXfs() const noexcept override;
+
+    virtual const hipFileFSOps_t *fsOps() const noexcept override;
+    virtual void                 *fsHandle() const noexcept override;
+
+private:
+    /// @brief The filesystem's handle for the file
+    void *m_fs_handle;
+
+    /// @brief The filesystem's operations
+    const hipFileFSOps_t *m_fs_ops;
+};
+
 class FileMap {
 public:
     virtual ~FileMap();
@@ -198,6 +264,12 @@ public:
     /// @attention A unique_lock on HipFileMutex must be held
     /// @param uf An unregistered file
     virtual hipFileHandle_t registerFile(UnregisteredFile &&uf);
+
+    /// @brief Registers a file that a userspace filesystem serves
+    /// @attention A unique_lock on HipFileMutex must be held
+    /// @param fs_handle The filesystem's handle for the file
+    /// @param fs_ops    The filesystem's operations; read and write must be set
+    virtual hipFileHandle_t registerUserspaceFile(void *fs_handle, const hipFileFSOps_t *fs_ops);
 
     /// @brief Deregisters the file associated with the provided file handle
     /// @attention A unique_lock on HipFileMutex must be held
@@ -215,6 +287,7 @@ public:
 private:
     /// File lookup tables.
     std::unordered_map<int, std::shared_ptr<IFile>>             from_fd;
+    std::unordered_map<void *, std::shared_ptr<IFile>>          from_fs_handle;
     std::unordered_map<hipFileHandle_t, std::shared_ptr<IFile>> from_fh;
 };
 

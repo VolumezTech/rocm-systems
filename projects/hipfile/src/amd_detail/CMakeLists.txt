@@ -15,6 +15,7 @@ set(HIPFILE_SOURCES
     backend/fallback.cpp
     backend/fastpath.cpp
     backend/host.cpp
+    backend/userspace-fs.cpp
     batch/batch.cpp
     buffer.cpp
     configuration.cpp

@@ -15,6 +15,7 @@
 #include "state.h"
 
 #include <cerrno>
+#include <cstdint>
 #include <cstring>
 #include <fcntl.h>
 #include <gmock/gmock.h>
@@ -213,6 +214,8 @@ TEST_F(HipFileHandle, file_initialization)
     EXPECT_TRUE(file->isRegularFile());
     EXPECT_TRUE(file->onExt4Ordered());
     EXPECT_FALSE(file->onXfs());
+    EXPECT_EQ(file->fsOps(), nullptr);
+    EXPECT_EQ(file->fsHandle(), nullptr);
 }
 
 TEST_F(HipFileHandle, register_handle_internal_linux_fd_already_registered)
@@ -341,19 +344,109 @@ TEST_F(HipFileHandle, register_handle_windows_handle_not_supported)
     ASSERT_EQ(hipFileHandleRegister(&fh, &rfd), HipFileOpError(hipFileIONotSupported));
 }
 
-TEST_F(HipFileHandle, register_handle_userspace_fs_not_supported)
+static ssize_t
+fsRead(void *, char *, size_t, hoff_t, hipFileRDMAInfo_t *)
+{
+    return 0;
+}
+
+static ssize_t
+fsWrite(void *, const char *, size_t, hoff_t, hipFileRDMAInfo_t *)
+{
+    return 0;
+}
+
+static const hipFileFSOps_t fs_ops{nullptr, nullptr, nullptr, fsRead, fsWrite};
+
+// The handle is the filesystem's own, so registering it must not touch the system (msys is strict).
+TEST_F(HipFileHandle, register_handle_userspace_fs_pointer)
+{
+    int             fs_file{};
+    hipFileHandle_t fh{};
+    hipFileDescr_t  rfd{};
+
+    rfd.type         = hipFileHandleTypeUserspaceFS;
+    rfd.handle.hFile = &fs_file;
+    rfd.fs_ops       = &fs_ops;
+
+    ASSERT_EQ(hipFileHandleRegister(&fh, &rfd), HIPFILE_SUCCESS);
+    auto file{Context<DriverState>::get()->getFile(fh)};
+    EXPECT_EQ(file->fsHandle(), &fs_file);
+    EXPECT_EQ(file->fsOps(), &fs_ops);
+    EXPECT_EQ(file->clientFd(), -1);
+    EXPECT_EQ(file->unbufferedFd(), nullopt);
+}
+
+// An fd fills only part of the handle union, so the caller zeroes the descriptor first.
+TEST_F(HipFileHandle, register_handle_userspace_fs_fd)
+{
+    hipFileHandle_t fh{};
+    hipFileDescr_t  rfd;
+
+    std::memset(&rfd, 0, sizeof(rfd));
+    rfd.type      = hipFileHandleTypeUserspaceFS;
+    rfd.handle.fd = 7;
+    rfd.fs_ops    = &fs_ops;
+
+    ASSERT_EQ(hipFileHandleRegister(&fh, &rfd), HIPFILE_SUCCESS);
+    auto file{Context<DriverState>::get()->getFile(fh)};
+    EXPECT_EQ(file->fsHandle(), reinterpret_cast<void *>(static_cast<intptr_t>(7)));
+}
+
+TEST_F(HipFileHandle, register_handle_userspace_fs_already_registered)
+{
+    int             fs_file{};
+    hipFileHandle_t fh{};
+    hipFileDescr_t  rfd{};
+
+    rfd.type         = hipFileHandleTypeUserspaceFS;
+    rfd.handle.hFile = &fs_file;
+    rfd.fs_ops       = &fs_ops;
+
+    ASSERT_EQ(hipFileHandleRegister(&fh, &rfd), HIPFILE_SUCCESS);
+    ASSERT_EQ(hipFileHandleRegister(&fh, &rfd), HipFileOpError(hipFileHandleAlreadyRegistered));
+}
+
+TEST_F(HipFileHandle, register_handle_userspace_fs_again_after_deregister)
+{
+    int             fs_file{};
+    hipFileHandle_t fh{};
+    hipFileDescr_t  rfd{};
+
+    rfd.type         = hipFileHandleTypeUserspaceFS;
+    rfd.handle.hFile = &fs_file;
+    rfd.fs_ops       = &fs_ops;
+
+    ASSERT_EQ(hipFileHandleRegister(&fh, &rfd), HIPFILE_SUCCESS);
+    hipFileHandleDeregister(fh);
+    ASSERT_EQ(hipFileHandleRegister(&fh, &rfd), HIPFILE_SUCCESS);
+}
+
+TEST_F(HipFileHandle, register_handle_userspace_fs_requires_fs_ops)
 {
     hipFileHandle_t fh{};
     hipFileDescr_t  rfd{};
 
     rfd.type      = hipFileHandleTypeUserspaceFS;
-    rfd.handle.fd = 0xBADF00D;
+    rfd.handle.fd = 7;
+    rfd.fs_ops    = nullptr;
 
-    ASSERT_EQ(hipFileHandleRegister(&fh, &rfd), HipFileOpError(hipFileIONotSupported));
+    ASSERT_EQ(hipFileHandleRegister(&fh, &rfd), HipFileOpError(hipFileInvalidValue));
 }
 
-// A type outside the enum's valid range must be rejected, not crash or invoke
-// undefined behavior when loaded.
+TEST_F(HipFileHandle, register_handle_userspace_fs_requires_read_and_write)
+{
+    const hipFileFSOps_t read_only{nullptr, nullptr, nullptr, fsRead, nullptr};
+    hipFileHandle_t      fh{};
+    hipFileDescr_t       rfd{};
+
+    rfd.type      = hipFileHandleTypeUserspaceFS;
+    rfd.handle.fd = 7;
+    rfd.fs_ops    = &read_only;
+
+    ASSERT_EQ(hipFileHandleRegister(&fh, &rfd), HipFileOpError(hipFileInvalidValue));
+}
+
 TEST_F(HipFileHandle, register_handle_invalid_type_not_supported)
 {
     hipFileHandle_t fh{};

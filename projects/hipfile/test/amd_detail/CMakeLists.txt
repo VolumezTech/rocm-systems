@@ -32,6 +32,7 @@ set(TEST_SOURCE_FILES
     stats.cpp
     stream.cpp
     thread-pool.cpp
+    userspace-fs.cpp
 )
 
 set(TEST_SYSINCLS

@@ -392,6 +392,13 @@ typedef struct hipFileRDMAInfo {
 /*!
  * @brief IO operations for RDMA filesystems
  * @ingroup file
+ *
+ * A file registered as hipFileHandleTypeUserspaceFS does its synchronous, batch and asynchronous IO through
+ * @p read and @p write, which must both be set. Each call receives the handle the file was registered with,
+ * the IO buffer at the requested buffer offset, and a NULL hipFileRDMAInfo_t. A callback returns the number
+ * of bytes transferred, or a negative errno value on failure. For asynchronous IO the callback runs on a
+ * worker thread, so it may make HIP calls. The handle is passed as a pointer-sized value, so a filesystem
+ * that registers a file descriptor zeroes the whole hipFileDescr_t before setting handle.fd.
  */
 typedef struct hipFileFSOps {
     /*!
@@ -432,7 +439,7 @@ typedef enum hipFileFileHandleType {
  *
  *  hipFileHandleTypeOpaqueFD    -> handle.fd non-negative, fs_ops ignored
  *  hipFileHandleTypeOpaqueWin32 -> handle.hFile non-NULL, fs_ops ignored
- *  hipFileHandleTypeUserspaceFS -> handle.fd non-negative, fs_ops non-NULL
+ *  hipFileHandleTypeUserspaceFS -> handle is the filesystem's own (an fd or a pointer), fs_ops non-NULL
  */
 typedef struct hipFileDescr {
     hipFileFileHandleType_t type; //!< Type of file handle being used

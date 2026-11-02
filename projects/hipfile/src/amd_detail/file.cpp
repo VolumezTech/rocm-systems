@@ -139,6 +139,89 @@ File::onXfs() const noexcept
     return m_on_xfs;
 }
 
+const hipFileFSOps_t *
+File::fsOps() const noexcept
+{
+    return nullptr;
+}
+
+void *
+File::fsHandle() const noexcept
+{
+    return nullptr;
+}
+
+UserspaceFsFile::UserspaceFsFile(void *fs_handle, const hipFileFSOps_t *fs_ops, const PassKey<FileMap> &)
+    : m_fs_handle{fs_handle}, m_fs_ops{fs_ops}
+{
+}
+
+int
+UserspaceFsFile::clientFd() const noexcept
+{
+    return -1;
+}
+
+int
+UserspaceFsFile::bufferedFd() const noexcept
+{
+    return -1;
+}
+
+optional<int>
+UserspaceFsFile::unbufferedFd() const noexcept
+{
+    return nullopt;
+}
+
+uint32_t
+UserspaceFsFile::dioMemAlign() const noexcept
+{
+    return 0;
+}
+
+uint32_t
+UserspaceFsFile::dioOffsetAlign() const noexcept
+{
+    return 0;
+}
+
+bool
+UserspaceFsFile::isBlockDevice() const noexcept
+{
+    return false;
+}
+
+bool
+UserspaceFsFile::isRegularFile() const noexcept
+{
+    return false;
+}
+
+bool
+UserspaceFsFile::onExt4Ordered() const noexcept
+{
+    return false;
+}
+
+bool
+UserspaceFsFile::onXfs() const noexcept
+{
+    return false;
+}
+
+const hipFileFSOps_t *
+UserspaceFsFile::fsOps() const noexcept
+{
+    return m_fs_ops;
+}
+
+void *
+UserspaceFsFile::fsHandle() const noexcept
+{
+    return m_fs_handle;
+}
+
 shared_ptr<IFile>
 FileMap::getFile(hipFileHandle_t fh)
 {
@@ -164,6 +247,20 @@ FileMap::registerFile(UnregisteredFile &&uf)
     return file->handle();
 }
 
+hipFileHandle_t
+FileMap::registerUserspaceFile(void *fs_handle, const hipFileFSOps_t *fs_ops)
+{
+    if (from_fs_handle.end() != from_fs_handle.find(fs_handle)) {
+        throw FileAlreadyRegistered();
+    }
+
+    auto file = std::shared_ptr<IFile>(new UserspaceFsFile(fs_handle, fs_ops, PassKey<FileMap>{}));
+    from_fs_handle[fs_handle] = file;
+    from_fh[file->handle()]   = file;
+
+    return file->handle();
+}
+
 void
 FileMap::deregisterFile(hipFileHandle_t fh)
 {
@@ -177,7 +274,12 @@ FileMap::deregisterFile(hipFileHandle_t fh)
         throw FileOperationsOutstanding();
     }
 
-    from_fd.erase(itr->second->clientFd());
+    if (itr->second->fsOps() != nullptr) {
+        from_fs_handle.erase(itr->second->fsHandle());
+    }
+    else {
+        from_fd.erase(itr->second->clientFd());
+    }
     from_fh.erase(fh);
 }
 
@@ -185,6 +287,7 @@ void
 FileMap::clear()
 {
     from_fd.clear();
+    from_fs_handle.clear();
     from_fh.clear();
 }
 

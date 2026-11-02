@@ -98,8 +98,22 @@ try {
             Context<StatsCollection>::get()->fileRegistration();
             return {hipFileSuccess, hipSuccess};
         }
+        case hipFileHandleTypeUserspaceFS: {
+            // As in cuFile, the handle belongs to the filesystem (a file descriptor or a pointer), so
+            // hipFile doesn't inspect it, and all IO goes through the filesystem's operations.
+            const hipFileFSOps_t *ops{descr->fs_ops};
+            if (ops == nullptr || ops->read == nullptr || ops->write == nullptr) {
+                return {hipFileInvalidValue, hipSuccess};
+            }
+            // Copy the handle's bits rather than read a union member the caller may not have set.
+            void *fs_handle{};
+            static_assert(sizeof(fs_handle) == sizeof(descr->handle));
+            std::memcpy(&fs_handle, &descr->handle, sizeof(fs_handle));
+            *fh = Context<DriverState>::get()->registerUserspaceFile(fs_handle, ops);
+            Context<StatsCollection>::get()->fileRegistration();
+            return {hipFileSuccess, hipSuccess};
+        }
         case hipFileHandleTypeOpaqueWin32:
-        case hipFileHandleTypeUserspaceFS:
         default:
             return {hipFileIONotSupported, hipSuccess};
     }
